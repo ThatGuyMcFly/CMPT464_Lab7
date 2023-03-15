@@ -30,6 +30,9 @@ typedef struct {
     byte payload[PAYLOAD_LENGTH];
 } message;
 
+/**
+ * State machine that handles receiving and printing messages
+*/
 fsm receiver {
     address packet;
     message * receivedMessage;
@@ -41,11 +44,14 @@ fsm receiver {
         receivedMessage = (message *)(packet + 1);
 
         if(receivedMessage->receiverId == nodeId) {
+            // go to printing a direct message
             proceed From_Direct;
         } else if (receivedMessage->receiverId == '0' || receivedMessage->receiverId == 0) {
+            // go to printing a boadcast message
             proceed From_Broadcast;
         }
 
+        // Return to receiving if message is not meant for this node
         proceed Receiving;
     
     state From_Direct:
@@ -63,19 +69,23 @@ fsm receiver {
 
 }
 
+/**
+ * State machine for handling transmitting messages
+*/
 fsm transmitter (message * messagePtr) {
     state Transmit_Message:
 
         address spkt;
 
+        // populate packet pointer
         spkt = tcv_wnp (Transmit_Message, sfd, sizeof(message) + 4);
         spkt [0] = 0;
-        byte * p = (byte*)(spkt + 1);
-        *p = messagePtr->senderId; p++;
-        *p = messagePtr->receiverId; p++;
-        *p = messagePtr->sequenceNumber; p++;
+        byte * p = (byte*)(spkt + 1); // skip first 2 bytes
+        *p = messagePtr->senderId; p++; // insert sender ID
+        *p = messagePtr->receiverId; p++; // insert receiveer ID
+        *p = messagePtr->sequenceNumber; p++; // insert sequence number
 
-        strcpy(p, messagePtr->payload);
+        strcpy(p, messagePtr->payload); // insert payload message
 
         tcv_endp (spkt);
         
@@ -86,6 +96,15 @@ fsm transmitter (message * messagePtr) {
         finish;
 }
 
+/**
+ * Ensures node ID is valid
+ * 
+ *  Parameters:
+ *      node: The node ID being checked
+ * 
+ *  Return:
+ *      returns whether the node is valid
+*/
 Boolean isValidNodeId(byte node) {
     if (node < 1 || node > 25) {
         return NO;
@@ -94,6 +113,9 @@ Boolean isValidNodeId(byte node) {
     return YES;
 }
 
+/**
+ * State machine for handling user input
+*/
 fsm root {
 
     byte receiverId;
@@ -111,21 +133,27 @@ fsm root {
 
         messagePtr = (message *) umalloc(sizeof(message));
 
+        // Set up cc1350 board
         phys_cc1350(0, MAX_PACKET_LENGTH);
 
+        // Load null plug in
         tcv_plug(0, &plug_null);
+
+        // Open the session
         sfd = tcv_open(WNONE, 0, 0);
 		tcv_control(sfd, PHYSOPT_ON, NULL);
 
+        // Ensure session opened properly
 		if (sfd < 0) {
 			diag("Cannot open tcv interface");
 			halt();
 		}
 
+        // Run receive fsm concurently
         runfsm receiver;
 
     state Menu_Start:
-        receiverId = 0;
+        receiverId = 0; // initialize receiver ID to 0 every time menu is displayed
         ser_outf(Menu_Start, "P2P Chat (Node #%d)\n\r", nodeId);
     
     state Menu_Choices:
@@ -184,15 +212,15 @@ fsm root {
         ser_outf(Broadcast_Transmission, "Message: ");
     
     state Get_Message:
-        //byte mes[PAYLOAD_LENGTH];
-
         ser_in(Get_Message, messagePtr->payload, PAYLOAD_LENGTH);
 
         if(strlen(messagePtr->payload) > PAYLOAD_LENGTH) {
+            // ensures that the last byte in the payload message is a null character
             messagePtr->payload[PAYLOAD_LENGTH - 1] = '/0';
         }
 
     state Transmit:
+        // Populate the message struct
         messagePtr->senderId = nodeId;
         messagePtr->receiverId = receiverId;
         messagePtr->sequenceNumber = sequence;
